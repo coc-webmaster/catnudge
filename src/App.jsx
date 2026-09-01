@@ -15,7 +15,6 @@ import {
   Cat,
   FileUp,
   AlertCircle,
-  Copy,
   Check,
   Loader2
 } from 'lucide-react';
@@ -106,8 +105,7 @@ export default function App() {
       handleSelectTxnForClient(firstPending);
 
     } catch (err) {
-      console.warn("D1 API warning (falling back to local memory):", err.message);
-      // Allows UI testing even before wrangler pages dev is running
+      console.warn("D1 API fallback (using local memory):", err.message);
       setMagicLink(`${window.location.origin}/nudge/mock-token-123`);
     } finally {
       setIsParsing(false);
@@ -122,15 +120,11 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleClientSubmit = (e) => {
-    e.preventDefault();
-    if (!currentTxn) return;
-    
   const handleClientSubmit = async (e) => {
     e.preventDefault();
     if (!currentTxn) return;
 
-    // 1. Optimistic UI update locally
+    // Optimistic UI update
     const updated = transactions.map((t) => 
       t.id === currentTxn.id 
         ? { 
@@ -144,7 +138,7 @@ export default function App() {
     );
     setTransactions(updated);
 
-    // 2. Persist update to Cloudflare D1 via API
+    // D1 API Persistence
     try {
       await fetch('/api/nudge/submit', {
         method: 'POST',
@@ -157,10 +151,10 @@ export default function App() {
         })
       });
     } catch (err) {
-      console.warn("D1 update failed (using local optimistic state):", err.message);
+      console.warn("D1 update failed (using local state):", err.message);
     }
 
-    // 3. Auto-advance to next pending item
+    // Auto-advance
     const nextPending = updated.find(t => t.status === 'pending');
     if (nextPending) {
       handleSelectTxnForClient(nextPending);
@@ -179,14 +173,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-      {/* Dev Header */}
+      {/* Header */}
       <header className="bg-slate-900 text-white px-4 py-3 sticky top-0 z-50 shadow-md flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="p-1 bg-emerald-500 rounded-lg text-slate-900">
             <Cat className="w-5 h-5 font-bold" />
           </div>
           <span className="font-extrabold tracking-tight text-base text-white">CatNudge</span>
-          <span className="hidden sm:inline-block text-[10px] bg-slate-800 text-emerald-400 font-semibold px-2 py-0.5 rounded border border-slate-700">D1 API Connected</span>
+          <span className="hidden sm:inline-block text-[10px] bg-slate-800 text-emerald-400 font-semibold px-2 py-0.5 rounded border border-slate-700">D1 Connected</span>
         </div>
         
         <div className="flex items-center bg-slate-800 rounded-xl p-1 text-xs font-semibold">
