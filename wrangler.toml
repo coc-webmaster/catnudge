@@ -1,0 +1,12 @@
+name = "catnudge"
+compatibility_date = "2026-02-01"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "catnudge-d1"
+database_id = "local-catnudge-d1"
+
+[[r2_buckets]]
+binding = "RECEIPTS_BUCKET"
+bucket_name = "catnudge-receipts"
