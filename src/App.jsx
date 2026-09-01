@@ -41,6 +41,7 @@ export default function App() {
   const [parseError, setParseError] = useState(null);
   const [magicLink, setMagicLink] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Active transaction for client view
   const currentTxn = transactions.find(t => t.id === activeClientTxnId) || transactions[0];
@@ -161,10 +162,34 @@ export default function App() {
     }
   };
 
-  const handleImageCapture = (e) => {
+  const handleImageCapture = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setPreviewBlobUrl(URL.createObjectURL(file));
+    if (!file) return;
+
+    // 1. Instant local preview via Blob URL
+    const localBlob = URL.createObjectURL(file);
+    setPreviewBlobUrl(localBlob);
+    setIsUploadingImage(true);
+
+    // 2. Upload photo to Cloudflare R2 API
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('transaction_id', currentTxn?.id || 'temp');
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok && data.receiptUrl) {
+        setPreviewBlobUrl(data.receiptUrl); // Set official R2 URL
+      }
+    } catch (err) {
+      console.warn("R2 upload fallback (using local preview):", err.message);
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
