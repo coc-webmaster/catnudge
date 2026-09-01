@@ -5,7 +5,7 @@ pages_build_output_dir = "./dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "catnudge-d1"
-database_id = "local-catnudge-d1"
+database_id = "ecbc56e3-a06a-4a4d-afdc-f77847c71b4c"
 
 [[r2_buckets]]
 binding = "RECEIPTS_BUCKET"
