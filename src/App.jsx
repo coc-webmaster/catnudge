@@ -1,184 +1,196 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import Papa from 'papaparse';
 import { 
   Upload, 
-  Link as LinkIcon, 
+  Download, 
+  Share2, 
+  Check, 
+  RefreshCw, 
+  AlertCircle, 
+  Camera, 
+  FileText, 
   CheckCircle2, 
   Clock, 
-  Camera, 
-  FileSpreadsheet, 
-  ExternalLink,
-  ChevronRight,
-  Sparkles,
+  Sparkles, 
+  Building, 
+  Search, 
+  Eye, 
   X,
-  Smartphone,
-  LayoutDashboard,
-  Cat,
-  FileUp,
-  AlertCircle,
-  Check,
-  Loader2
+  FileSpreadsheet,
+  ArrowRight
 } from 'lucide-react';
-import { parseBankCSV } from './utils/csvEngine';
-import ExportModal from './components/ExportModal';
-import { Download } from 'lucide-react'; // Ensure Download is included in lucide-react import
 
+import ExportModal from './components/ExportModal';
+import ShareModal from './components/ShareModal';
+
+// Category presets for quick client categorization
 const CATEGORY_OPTIONS = [
-  "Job Supplies",
-  "Office Expense",
-  "Travel & Meals",
-  "Software & Subscriptions",
-  "Vehicle & Gas",
-  "Personal / Draw",
-  "Uncategorized"
+  'Office Supplies',
+  'Meals & Entertainment',
+  'Travel & Lodging',
+  'Software & Subscriptions',
+  'Professional Services',
+  'Vehicle & Gas',
+  'Utilities & Rent',
+  'Equipment & Hardware',
+  'Personal / Non-Business',
+  'Other / Need Advice'
 ];
 
 export default function App() {
-  const [view, setView] = useState('dashboard');
-  const [transactions, setTransactions] = useState([]);
-  const [activeClientTxnId, setActiveClientTxnId] = useState(null);
-  const [isExportOpen, setIsExportOpen] = useState(false);
-  
-  // Async status states
+  // App Navigation & Active Context
+  const [view, setView] = useState('dashboard'); // 'dashboard' | 'client'
+  const [clientName, setClientName] = useState('Apex Construction LLC');
+  const [activeBatchToken, setActiveBatchToken] = useState('demo_token_123');
+
+  // Core Data State
+  const [transactions, setTransactions] = useState([
+    {
+      id: 'txn_101',
+      date: '2026-08-28',
+      vendor: 'Home Depot #4402',
+      amount: 142.85,
+      suggested_category: 'Office Supplies',
+      selected_category: null,
+      client_note: '',
+      receipt_url: null,
+      status: 'pending'
+    },
+    {
+      id: 'txn_102',
+      date: '2026-08-29',
+      vendor: 'Shell Oil Company',
+      amount: 68.50,
+      suggested_category: 'Vehicle & Gas',
+      selected_category: 'Vehicle & Gas',
+      client_note: 'Gas for work truck',
+      receipt_url: null,
+      status: 'completed'
+    },
+    {
+      id: 'txn_103',
+      date: '2026-08-30',
+      vendor: 'Square *Coffee Roast',
+      amount: 18.25,
+      suggested_category: 'Meals & Entertainment',
+      selected_category: null,
+      client_note: '',
+      receipt_url: null,
+      status: 'pending'
+    }
+  ]);
+
+  // Client Portal Active Selection State
+  const [activeClientTxnId, setActiveClientTxnId] = useState('txn_101');
+  const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
+
+  // Async Loading States
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [parseError, setParseError] = useState(null);
-  const [magicLink, setMagicLink] = useState(null);
-  const [copied, setCopied] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // Active transaction for client view
-  const currentTxn = transactions.find(t => t.id === activeClientTxnId) || transactions[0];
+  // Modal Visibility States
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
 
-  // Client Input State
-  const [selectedCat, setSelectedCat] = useState(currentTxn?.suggested_category || CATEGORY_OPTIONS[0]);
-  const [note, setNote] = useState(currentTxn?.client_note || "");
-  const [previewBlobUrl, setPreviewBlobUrl] = useState(currentTxn?.receipt_url || null);
+  // Search & Filter State in Dashboard
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
 
-  const handleSelectTxnForClient = (txn) => {
-    if (!txn) return;
-    setActiveClientTxnId(txn.id);
-    setSelectedCat(txn.selected_category || txn.suggested_category);
-    setNote(txn.client_note || "");
-    setPreviewBlobUrl(txn.receipt_url || null);
+  // Check URL parameters on mount for Magic Link Token (?token=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      setActiveBatchToken(token);
+      setView('client');
+      // Fetch batch data from Cloudflare D1 API endpoint if live
+      fetchBatchFromApi(token);
+    }
+  }, []);
+
+  const fetchBatchFromApi = async (token) => {
+    try {
+      const res = await fetch(`/api/batch?token=${token}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.transactions) {
+          setTransactions(data.transactions);
+          if (data.client_name) setClientName(data.client_name);
+          const firstPending = data.transactions.find(t => t.status === 'pending');
+          if (firstPending) setActiveClientTxnId(firstPending.id);
+        }
+      }
+    } catch (err) {
+      console.log("Using local transaction state fallback:", err.message);
+    }
   };
 
-  // CSV File Upload + Cloudflare D1 Persist
-  const handleFileUpload = async (e) => {
+  // CSV Parsing Handler for Bookkeeper
+  const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setIsParsing(true);
-    setParseError(null);
-    setMagicLink(null);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const parsedTxns = results.data.map((row, index) => {
+          const rawAmount = row.Amount || row.amount || row.Transaction_Amount || '0';
+          const cleanAmount = parseFloat(String(rawAmount).replace(/[^0-9.-]+/g, '')) || 0;
+          
+          return {
+            id: `txn_${Date.now()}_${index}`,
+            date: row.Date || row.date || new Date().toISOString().split('T')[0],
+            vendor: row.Description || row.vendor || row.Payee || 'Unknown Vendor',
+            amount: Math.abs(cleanAmount),
+            suggested_category: 'Uncategorized',
+            selected_category: null,
+            client_note: '',
+            receipt_url: null,
+            status: 'pending'
+          };
+        });
 
-    try {
-      // 1. Parse CSV locally via PapaParse
-      const parsedTxns = await parseBankCSV(file);
-      
-      if (parsedTxns.length === 0) {
-        setParseError("No valid transaction rows found in CSV.");
+        if (parsedTxns.length > 0) {
+          setTransactions(parsedTxns);
+          setActiveClientTxnId(parsedTxns[0].id);
+          setActiveBatchToken(`batch_${Date.now().toString(36)}`);
+        }
         setIsParsing(false);
-        return;
+      },
+      error: (err) => {
+        console.error("CSV Parse Error:", err);
+        alert("Failed to parse CSV file. Please check file format.");
+        setIsParsing(false);
       }
-
-      setTransactions(parsedTxns);
-      setIsParsing(false);
-      setIsSaving(true);
-
-      // 2. Persist parsed transactions directly to D1 API endpoint
-      const res = await fetch('/api/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_name: "Apex Construction LLC",
-          transactions: parsedTxns
-        })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to save batch to Cloudflare D1.");
-      }
-
-      // 3. Set generated magic link URL
-      const fullUrl = `${window.location.origin}${data.shareUrl}`;
-      setMagicLink(fullUrl);
-
-      const firstPending = parsedTxns.find(t => t.status === 'pending') || parsedTxns[0];
-      handleSelectTxnForClient(firstPending);
-
-    } catch (err) {
-      console.warn("D1 API fallback (using local memory):", err.message);
-      setMagicLink(`${window.location.origin}/nudge/mock-token-123`);
-    } finally {
-      setIsParsing(false);
-      setIsSaving(false);
-    }
+    });
   };
 
-  const copyMagicLink = () => {
-    if (!magicLink) return;
-    navigator.clipboard.writeText(magicLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleClientSubmit = async (e) => {
-    e.preventDefault();
-    if (!currentTxn) return;
-
-    // Optimistic UI update
-    const updated = transactions.map((t) => 
-      t.id === currentTxn.id 
-        ? { 
-            ...t, 
-            selected_category: selectedCat, 
-            client_note: note, 
-            receipt_url: previewBlobUrl,
-            status: 'completed' 
-          }
-        : t
-    );
-    setTransactions(updated);
-
-    // D1 API Persistence
-    try {
-      await fetch('/api/nudge/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transaction_id: currentTxn.id,
-          selected_category: selectedCat,
-          client_note: note,
-          receipt_url: previewBlobUrl
-        })
-      });
-    } catch (err) {
-      console.warn("D1 update failed (using local state):", err.message);
-    }
-
-    // Auto-advance
-    const nextPending = updated.find(t => t.status === 'pending');
-    if (nextPending) {
-      handleSelectTxnForClient(nextPending);
-    }
-  };
-
+  // Receipt Photo Capture Handler for Client
   const handleImageCapture = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // 1. Instant local preview via Blob URL
+    // Local instant preview
     const localBlob = URL.createObjectURL(file);
     setPreviewBlobUrl(localBlob);
     setIsUploadingImage(true);
 
-    // 2. Upload photo to Cloudflare R2 API
+    // Save to active transaction state locally
+    setTransactions(prev => prev.map(t => {
+      if (t.id === activeClientTxnId) {
+        return { ...t, receipt_url: localBlob };
+      }
+      return t;
+    }));
+
+    // Upload to Cloudflare R2 Bucket via API
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('transaction_id', currentTxn?.id || 'temp');
+      formData.append('transaction_id', activeClientTxnId);
 
       const res = await fetch('/api/upload', {
         method: 'POST',
@@ -187,7 +199,13 @@ export default function App() {
 
       const data = await res.json();
       if (res.ok && data.receiptUrl) {
-        setPreviewBlobUrl(data.receiptUrl); // Set official R2 URL
+        setPreviewBlobUrl(data.receiptUrl);
+        setTransactions(prev => prev.map(t => {
+          if (t.id === activeClientTxnId) {
+            return { ...t, receipt_url: data.receiptUrl };
+          }
+          return t;
+        }));
       }
     } catch (err) {
       console.warn("R2 upload fallback (using local preview):", err.message);
@@ -196,294 +214,371 @@ export default function App() {
     }
   };
 
-  const pendingCount = transactions.filter(t => t.status === 'pending').length;
+  // Update category selection for active transaction
+  const handleSelectCategory = (category) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id === activeClientTxnId) {
+        return {
+          ...t,
+          selected_category: category,
+          status: 'completed'
+        };
+      }
+      return t;
+    }));
+  };
+
+  // Update note text for active transaction
+  const handleNoteChange = (noteText) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id === activeClientTxnId) {
+        return { ...t, client_note: noteText };
+      }
+      return t;
+    }));
+  };
+
+  // Derived Values
+  const activeTxn = transactions.find(t => t.id === activeClientTxnId) || transactions[0];
   const completedCount = transactions.filter(t => t.status === 'completed').length;
+  const pendingCount = transactions.filter(t => t.status === 'pending').length;
+
+  const filteredTransactions = transactions.filter(t => {
+    const matchesSearch = t.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          t.date.includes(searchQuery);
+    const matchesStatus = statusFilter === 'all' ? true : t.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-      {/* Header */}
-      <header className="bg-slate-900 text-white px-4 py-3 sticky top-0 z-50 shadow-md flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="p-1 bg-emerald-500 rounded-lg text-slate-900">
-            <Cat className="w-5 h-5 font-bold" />
+    <div className="min-h-screen bg-slate-100 text-slate-800 font-sans antialiased">
+      
+      {/* GLOBAL TOP BAR */}
+      <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+          
+          {/* Brand Logo */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-emerald-500 text-slate-950 font-black flex items-center justify-center rounded-xl text-lg shadow-inner">
+              🐾
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-black tracking-tight text-lg leading-none">CatNudge</span>
+                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  v1.0 Edge
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400 block font-medium">Smart Client Categorization</span>
+            </div>
           </div>
-          <span className="font-extrabold tracking-tight text-base text-white">CatNudge</span>
-          <span className="hidden sm:inline-block text-[10px] bg-slate-800 text-emerald-400 font-semibold px-2 py-0.5 rounded border border-slate-700">D1 Connected</span>
-        </div>
-        
-        <div className="flex items-center bg-slate-800 rounded-xl p-1 text-xs font-semibold">
-          <button
-            onClick={() => setView('dashboard')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-              view === 'dashboard' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <LayoutDashboard className="w-3.5 h-3.5" />
-            <span>Dashboard</span>
-          </button>
-          <button
-            onClick={() => {
-              setView('client_mobile');
-              const firstPending = transactions.find(t => t.status === 'pending') || transactions[0];
-              handleSelectTxnForClient(firstPending);
-            }}
-            disabled={transactions.length === 0}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-              transactions.length === 0 ? 'opacity-50 cursor-not-allowed text-slate-500' :
-              view === 'client_mobile' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Smartphone className="w-3.5 h-3.5" />
-            <span>Client Mobile Nudge</span>
-          </button>
+
+          {/* Mode Switcher & Global Actions */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            
+            {/* View Mode Toggle Switch */}
+            <div className="bg-slate-800 p-1 rounded-xl flex items-center border border-slate-700/80">
+              <button
+                onClick={() => setView('dashboard')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  view === 'dashboard'
+                    ? 'bg-emerald-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Bookkeeper</span>
+              </button>
+              <button
+                onClick={() => setView('client')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  view === 'client'
+                    ? 'bg-emerald-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Client View</span>
+              </button>
+            </div>
+
+            {/* Dashboard Action Buttons */}
+            {view === 'dashboard' && (
+              <>
+                <button
+                  onClick={() => setIsShareOpen(true)}
+                  disabled={!activeBatchToken}
+                  className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-3.5 py-2 rounded-xl transition shadow-sm disabled:opacity-50"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Share Link</span>
+                </button>
+
+                <button
+                  onClick={() => setIsExportOpen(true)}
+                  disabled={transactions.length === 0}
+                  className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl border border-slate-700 transition shadow-sm disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden md:inline">Export CSV</span>
+                </button>
+              </>
+            )}
+
+          </div>
         </div>
       </header>
 
-      {/* DASHBOARD VIEW */}
+      {/* VIEW 1: BOOKKEEPER DASHBOARD */}
       {view === 'dashboard' && (
-        <main className="max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6 flex-1">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <div>
-              <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Active Workspace</span>
-              <h1 className="text-2xl font-bold text-slate-900 mt-0.5">Apex Construction LLC</h1>
-              <p className="text-xs text-slate-500 mt-0.5">Batch: September 2026 Uncategorized Statements</p>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm cursor-pointer">
-                {isParsing || isSaving ? (
-                  <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4 text-slate-500" />
-                )}
-                <span>{isParsing ? "Parsing..." : isSaving ? "Saving to D1..." : "Upload Bank CSV"}</span>
-                <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" disabled={isParsing || isSaving} />
-              </label>
-
-              {magicLink && (
-                <button 
-                  onClick={copyMagicLink}
-                  className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm"
-                >
-                  {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <LinkIcon className="w-4 h-4 text-emerald-400" />}
-                  <span>{copied ? "Copied Link!" : "Copy Nudge Link"}</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => setIsExportOpen(true)}
-                disabled={transactions.length === 0}
-                className={`flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm ${
-                  transactions.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-              >
-                <Download className="w-4 h-4 text-emerald-400" />
-                <span>Export CSV</span>
-              </button>
-
-            </div>
-          </div>
-
-          {parseError && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl flex items-center gap-2 text-sm">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{parseError}</span>
-            </div>
-          )}
-
-          {/* Metrics */}
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+          
+          {/* Top Banner Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+            
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Parsed</p>
-                <p className="text-2xl font-black text-slate-900 mt-1">{transactions.length}</p>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Total Items</span>
+                <span className="text-2xl font-extrabold text-slate-900 mt-0.5 block">{transactions.length}</span>
               </div>
-              <div className="p-3 bg-slate-100 rounded-xl text-slate-600">
-                <FileSpreadsheet className="w-5 h-5" />
+              <div className="p-3 bg-slate-100 text-slate-600 rounded-xl">
+                <FileText className="w-5 h-5" />
               </div>
             </div>
-            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Awaiting Nudge</p>
-                <p className="text-2xl font-black text-amber-600 mt-1">{pendingCount}</p>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Needs Client Action</span>
+                <span className="text-2xl font-extrabold text-amber-600 mt-0.5 block">{pendingCount}</span>
               </div>
-              <div className="p-3 bg-amber-50 rounded-xl text-amber-600">
+              <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
                 <Clock className="w-5 h-5" />
               </div>
             </div>
-            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Categorized</p>
-                <p className="text-2xl font-black text-emerald-600 mt-1">{completedCount}</p>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Categorized</span>
+                <span className="text-2xl font-extrabold text-emerald-600 mt-0.5 block">{completedCount}</span>
               </div>
-              <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
                 <CheckCircle2 className="w-5 h-5" />
               </div>
             </div>
+
           </div>
 
-          {/* Table / Dropzone */}
-          {transactions.length === 0 ? (
-            <div className="bg-white rounded-2xl border-2 border-dashed border-slate-300 p-12 text-center flex flex-col items-center justify-center space-y-3">
-              <div className="p-4 bg-emerald-50 text-emerald-600 rounded-full">
-                <FileUp className="w-8 h-8" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-800 text-lg">Upload Bank CSV File</h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                  Upload raw bank exports. CatNudge auto-categorizes transactions and saves them to Cloudflare D1.
-                </p>
-              </div>
-              <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-5 py-2.5 rounded-xl cursor-pointer shadow transition">
-                <span>Select CSV File</span>
-                <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+          {/* Main Controls & Toolbar */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+            
+            {/* CSV File Upload Input */}
+            <div className="w-full md:w-auto">
+              <label className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition shadow">
+                <Upload className="w-4 h-4 text-emerald-400" />
+                <span>Upload New Bank CSV</span>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
               </label>
             </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <h2 className="font-bold text-slate-800 text-sm">Parsed Transactions</h2>
-                <span className="text-xs text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">D1 Database Persisted</span>
+
+            {/* Search and Filters */}
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="relative flex-1 md:w-64">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search vendor or date..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                />
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-400 border-b border-slate-100 text-xs font-semibold uppercase tracking-wider">
-                    <tr>
-                      <th className="px-6 py-3">Date</th>
-                      <th className="px-6 py-3">Vendor</th>
-                      <th className="px-6 py-3">Amount</th>
-                      <th className="px-6 py-3">Suggested GL</th>
-                      <th className="px-6 py-3">Client Selected</th>
-                      <th className="px-6 py-3">Client Note</th>
-                      <th className="px-6 py-3">Receipt</th>
-                      <th className="px-6 py-3">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-normal text-slate-700">
-                    {transactions.map((t) => (
-                      <tr key={t.id} className="hover:bg-slate-50/80 transition">
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-500 font-mono text-xs">{t.date}</td>
-                        <td className="px-6 py-4 font-semibold text-slate-900 whitespace-nowrap">{t.vendor}</td>
-                        <td className="px-6 py-4 font-mono font-bold text-slate-900 whitespace-nowrap">${t.amount.toFixed(2)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md text-xs font-semibold border border-slate-200">
-                            {t.suggested_category}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-semibold text-emerald-700 whitespace-nowrap">
-                          {t.selected_category || <span className="text-slate-300 font-normal">—</span>}
-                        </td>
-                        <td className="px-6 py-4 max-w-xs truncate text-xs text-slate-600">
-                          {t.client_note || <span className="text-slate-300">—</span>}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-xs">
-                          {t.receipt_url ? (
-                            <a href={t.receipt_url} target="_blank" rel="noreferrer" className="text-emerald-600 font-medium hover:underline flex items-center gap-1">
-                              <span>View</span> <ExternalLink className="w-3 h-3" />
-                            </a>
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {t.status === 'completed' ? (
-                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-emerald-200">
-                              <CheckCircle2 className="w-3 h-3" /> Ready
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-amber-200">
-                              <Clock className="w-3 h-3" /> Pending
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="text-xs font-semibold border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 text-slate-700 focus:outline-none"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending Client</option>
+                <option value="completed">Categorized</option>
+              </select>
             </div>
-          )}
+
+          </div>
+
+          {/* Transactions Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                    <th className="py-3.5 px-4">Date</th>
+                    <th className="py-3.5 px-4">Vendor / Description</th>
+                    <th className="py-3.5 px-4 text-right">Amount</th>
+                    <th className="py-3.5 px-4">AI Suggestion</th>
+                    <th className="py-3.5 px-4">Final Category</th>
+                    <th className="py-3.5 px-4">Client Note / Receipt</th>
+                    <th className="py-3.5 px-4 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTransactions.map((txn) => (
+                    <tr key={txn.id} className="hover:bg-slate-50/80 transition">
+                      <td className="py-3 px-4 font-mono text-slate-600 whitespace-nowrap">{txn.date}</td>
+                      <td className="py-3 px-4 font-bold text-slate-900">{txn.vendor}</td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                        ${txn.amount.toFixed(2)}
+                      </td>
+                      <td className="py-3 px-4 text-slate-500">
+                        <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium">
+                          <Sparkles className="w-3 h-3 text-emerald-500" />
+                          {txn.suggested_category}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-bold text-emerald-700">
+                        {txn.selected_category || '—'}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">
+                        <div className="flex items-center gap-2">
+                          <span>{txn.client_note || '—'}</span>
+                          {txn.receipt_url && (
+                            <a
+                              href={txn.receipt_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1 bg-emerald-100 text-emerald-800 rounded hover:bg-emerald-200 transition"
+                              title="View Receipt Photo"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center whitespace-nowrap">
+                        {txn.status === 'completed' ? (
+                          <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                            <Check className="w-3 h-3" /> Categorized
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                            <Clock className="w-3 h-3" /> Pending
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredTransactions.length === 0 && (
+                    <tr>
+                      <td colSpan="7" className="text-center py-8 text-slate-400 font-medium">
+                        No transactions match your search filter.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </main>
       )}
 
-      {/* CLIENT MOBILE VIEW */}
-      {view === 'client_mobile' && currentTxn && (
-        <div className="flex-1 flex flex-col items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white min-h-[620px] rounded-[38px] border-[10px] border-slate-900 shadow-2xl flex flex-col justify-between overflow-hidden relative">
-            <div className="bg-slate-900 text-white px-5 pt-5 pb-4 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider flex items-center gap-1">
-                  <Cat className="w-3 h-3" /> CatNudge Link
-                </p>
-                <p className="font-bold text-xs text-white">Precision Bookkeeping</p>
-              </div>
-              <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold px-2.5 py-1 rounded-full">
-                {pendingCount} Remaining
+      {/* VIEW 2: CLIENT MOBILE PORTAL */}
+      {view === 'client' && (
+        <main className="max-w-md mx-auto px-4 py-6 space-y-5">
+          
+          {/* Mobile Portal Welcome Card */}
+          <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xl space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="bg-emerald-500/20 text-emerald-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                Action Required
+              </span>
+              <span className="text-xs font-mono text-slate-400">
+                {pendingCount} remaining
               </span>
             </div>
+            <h2 className="text-xl font-black">{clientName}</h2>
+            <p className="text-xs text-slate-300">
+              Tap a transaction below to select a category and snap a receipt photo for your bookkeeper.
+            </p>
+          </div>
 
-            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
-              <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-2xl space-y-1">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="font-mono text-slate-400">{currentTxn.date}</span>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md">
-                    <Sparkles className="w-3 h-3 text-emerald-600" /> AI Suggested
-                  </span>
+          {/* Active Transaction Focus Card */}
+          {activeTxn && (
+            <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
+              
+              {/* Transaction Header */}
+              <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+                <div>
+                  <span className="text-xs text-slate-400 font-mono block">{activeTxn.date}</span>
+                  <h3 className="text-lg font-black text-slate-900">{activeTxn.vendor}</h3>
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 leading-tight pt-1">{currentTxn.vendor}</h3>
-                <p className="text-3xl font-black text-slate-900 font-mono">${currentTxn.amount.toFixed(2)}</p>
+                <div className="text-right">
+                  <span className="text-2xl font-black text-slate-900 font-mono">${activeTxn.amount.toFixed(2)}</span>
+                </div>
               </div>
 
-              <form id="mobile-client-form" onSubmit={handleClientSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Category
-                  </label>
-                  <select
-                    value={selectedCat}
-                    onChange={(e) => setSelectedCat(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-sm"
-                  >
-                    {CATEGORY_OPTIONS.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Note for Bookkeeper
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. Bought dry wall supplies for Smith job"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-xl p-3 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-sm resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Attach Receipt (Optional)
-                  </label>
-                  {previewBlobUrl ? (
-                    <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 group">
-                      <img src={previewBlobUrl} alt="Receipt preview" className="w-full h-28 object-cover opacity-90" />
+              {/* Category Options Pills */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
+                  Select Category
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {CATEGORY_OPTIONS.map((cat) => {
+                    const isSelected = activeTxn.selected_category === cat;
+                    return (
                       <button
+                        key={cat}
                         type="button"
-                        onClick={() => setPreviewBlobUrl(null)}
-                        className="absolute top-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-1 rounded-full shadow"
+                        onClick={() => handleSelectCategory(cat)}
+                        className={`p-2.5 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between ${
+                          isSelected
+                            ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        }`}
                       >
-                        <X className="w-4 h-4" />
+                        <span className="truncate">{cat}</span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
                       </button>
-                    </div>
-                  ) : (
-                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-3 cursor-pointer hover:bg-slate-50 transition bg-slate-50/50">
-                      <Camera className="w-5 h-5 text-slate-400 mb-1" />
-                      <span className="text-xs font-semibold text-slate-600">Snap Photo or Upload</span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Optional Note Field */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Note for Bookkeeper (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Client lunch with John"
+                  value={activeTxn.client_note}
+                  onChange={(e) => handleNoteChange(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                />
+              </div>
+
+              {/* Snap Receipt Button & Preview */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Attach Receipt
+                </label>
+                
+                {activeTxn.receipt_url || previewBlobUrl ? (
+                  <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-32 flex items-center justify-center">
+                    <img 
+                      src={previewBlobUrl || activeTxn.receipt_url} 
+                      alt="Receipt Preview" 
+                      className="object-cover w-full h-full opacity-90"
+                    />
+                    <label className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-2 rounded-lg text-xs font-bold cursor-pointer backdrop-blur transition flex items-center gap-1">
+                      <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Retake</span>
                       <input 
                         type="file" 
                         accept="image/*" 
@@ -492,31 +587,83 @@ export default function App() {
                         className="hidden" 
                       />
                     </label>
-                  )}
-                </div>
-              </form>
-            </div>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-emerald-500 p-4 rounded-xl cursor-pointer transition text-slate-600 bg-slate-50 hover:bg-emerald-50/50">
+                    <Camera className="w-4 h-4 text-emerald-600" />
+                    <span className="text-xs font-bold">Take Receipt Photo</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      capture="environment" 
+                      onChange={handleImageCapture} 
+                      className="hidden" 
+                    />
+                  </label>
+                )}
+              </div>
 
-            <div className="p-4 border-t border-slate-100 bg-white">
-              <button
-                type="submit"
-                form="mobile-client-form"
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition"
-              >
-                <span>Confirm & Next</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
             </div>
-            <ExportModal
-              isOpen={isExportOpen}
-              onClose={() => setIsExportOpen(false)}
-              transactions={transactions}
-              clientName="Apex Construction LLC"
-            />
+          )}
+
+          {/* Pending Items Selector Tabs */}
+          <div className="space-y-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block px-1">
+              All Items ({transactions.length})
+            </span>
+            <div className="space-y-2">
+              {transactions.map((txn) => {
+                const isActive = txn.id === activeClientTxnId;
+                return (
+                  <button
+                    key={txn.id}
+                    onClick={() => {
+                      setActiveClientTxnId(txn.id);
+                      setPreviewBlobUrl(txn.receipt_url);
+                    }}
+                    className={`w-full text-left p-3.5 rounded-xl border transition flex items-center justify-between ${
+                      isActive
+                        ? 'border-emerald-500 bg-white shadow-md ring-2 ring-emerald-500/10'
+                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-slate-900">{txn.vendor}</span>
+                        {txn.status === 'completed' && (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        )}
+                      </div>
+                      <span className="text-[11px] text-slate-400 block">{txn.date}</span>
+                    </div>
+                    <span className="font-mono font-bold text-xs text-slate-900">
+                      ${txn.amount.toFixed(2)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+
+        </main>
       )}
+
+      {/* MODALS */}
+      <ExportModal
+        isOpen={isExportOpen}
+        onClose={() => setIsExportOpen(false)}
+        transactions={transactions}
+        clientName={clientName}
+      />
+
+      <ShareModal
+        isOpen={isShareOpen}
+        onClose={() => setIsShareOpen(false)}
+        magicToken={activeBatchToken}
+        clientName={clientName}
+        pendingCount={pendingCount}
+      />
+
     </div>
-    
   );
 }
