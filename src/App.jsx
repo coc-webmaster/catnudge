@@ -19,6 +19,8 @@ import {
   Loader2
 } from 'lucide-react';
 import { parseBankCSV } from './utils/csvEngine';
+import ExportModal from './components/ExportModal';
+import { Download } from 'lucide-react'; // Ensure Download is included in lucide-react import
 
 const CATEGORY_OPTIONS = [
   "Job Supplies",
@@ -34,6 +36,7 @@ export default function App() {
   const [view, setView] = useState('dashboard');
   const [transactions, setTransactions] = useState([]);
   const [activeClientTxnId, setActiveClientTxnId] = useState(null);
+  const [isExportOpen, setIsExportOpen] = useState(false);
   
   // Async status states
   const [isParsing, setIsParsing] = useState(false);
@@ -266,6 +269,18 @@ export default function App() {
                   <span>{copied ? "Copied Link!" : "Copy Nudge Link"}</span>
                 </button>
               )}
+
+              <button
+                onClick={() => setIsExportOpen(true)}
+                disabled={transactions.length === 0}
+                className={`flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm ${
+                  transactions.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>Export CSV</span>
+              </button>
+
             </div>
           </div>
 
@@ -492,9 +507,16 @@ export default function App() {
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
+            <ExportModal
+              isOpen={isExportOpen}
+              onClose={() => setIsExportOpen(false)}
+              transactions={transactions}
+              clientName="Apex Construction LLC"
+            />
           </div>
         </div>
       )}
     </div>
+    
   );
 }
