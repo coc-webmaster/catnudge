@@ -115,9 +115,17 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.transactions) {
-          setTransactions(data.transactions);
+          // Clean null values from D1 so React inputs stay strictly controlled
+          const cleanedTxns = data.transactions.map(t => ({
+            ...t,
+            client_note: t.client_note || '',
+            selected_category: t.selected_category || null,
+            receipt_url: t.receipt_url || null
+          }));
+
+          setTransactions(cleanedTxns);
           if (data.client_name) setClientName(data.client_name);
-          const firstPending = data.transactions.find(t => t.status === 'pending');
+          const firstPending = cleanedTxns.find(t => t.status === 'pending');
           if (firstPending) setActiveClientTxnId(firstPending.id);
         }
       }
