@@ -126,7 +126,7 @@ export default function App() {
     }
   };
 
-  // CSV Parsing Handler for Bookkeeper
+  // CSV Parsing & D1 Persistence Handler
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -135,7 +135,7 @@ export default function App() {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
+      complete: async (results) => {
         const parsedTxns = results.data.map((row, index) => {
           const rawAmount = row.Amount || row.amount || row.Transaction_Amount || '0';
           const cleanAmount = parseFloat(String(rawAmount).replace(/[^0-9.-]+/g, '')) || 0;
@@ -153,12 +153,38 @@ export default function App() {
           };
         });
 
-        if (parsedTxns.length > 0) {
-          setTransactions(parsedTxns);
-          setActiveClientTxnId(parsedTxns[0].id);
-          setActiveBatchToken(`batch_${Date.now().toString(36)}`);
+        if (parsedTxns.length === 0) {
+          setIsParsing(false);
+          alert("No valid transaction rows found in CSV.");
+          return;
         }
-        setIsParsing(false);
+
+        // 1. Update UI state immediately
+        setTransactions(parsedTxns);
+        setActiveClientTxnId(parsedTxns[0].id);
+
+        // 2. Persist to Cloudflare D1 via /api/batch
+        try {
+          const res = await fetch('/api/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              client_name: clientName,
+              transactions: parsedTxns
+            })
+          });
+
+          const data = await res.json();
+          if (res.ok && data.magicToken) {
+            setActiveBatchToken(data.magicToken);
+          } else {
+            console.warn("D1 persistence fallback:", data.error);
+          }
+        } catch (err) {
+          console.warn("Network error saving batch to D1:", err.message);
+        } finally {
+          setIsParsing(false);
+        }
       },
       error: (err) => {
         console.error("CSV Parse Error:", err);
@@ -214,8 +240,8 @@ export default function App() {
     }
   };
 
-  // Update category selection for active transaction
-  const handleSelectCategory = (category) => {
+  // Update category selection & persist directly to D1
+  const handleSelectCategory = async (category) => {
     setTransactions(prev => prev.map(t => {
       if (t.id === activeClientTxnId) {
         return {
@@ -226,16 +252,46 @@ export default function App() {
       }
       return t;
     }));
+
+    try {
+      const currentTxn = transactions.find(t => t.id === activeClientTxnId);
+      await fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction_id: activeClientTxnId,
+          selected_category: category,
+          client_note: currentTxn?.client_note || ''
+        })
+      });
+    } catch (err) {
+      console.warn("Failed to save category to D1:", err.message);
+    }
   };
 
-  // Update note text for active transaction
-  const handleNoteChange = (noteText) => {
+  // Update note text & persist directly to D1
+  const handleNoteChange = async (noteText) => {
     setTransactions(prev => prev.map(t => {
       if (t.id === activeClientTxnId) {
         return { ...t, client_note: noteText };
       }
       return t;
     }));
+
+    try {
+      const currentTxn = transactions.find(t => t.id === activeClientTxnId);
+      await fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction_id: activeClientTxnId,
+          selected_category: currentTxn?.selected_category || '',
+          client_note: noteText
+        })
+      });
+    } catch (err) {
+      console.warn("Failed to save note to D1:", err.message);
+    }
   };
 
   // Derived Values

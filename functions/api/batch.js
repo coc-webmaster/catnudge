@@ -67,3 +67,58 @@ export async function onRequestPost(context) {
     );
   }
 }
+
+/**
+ * GET /api/batch?token=xyz
+ * Fetches batch metadata and transaction list for client view
+ */
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token");
+
+  if (!token) {
+    return new Response(JSON.stringify({ error: "Token required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  try {
+    const batch = await env.DB.prepare(
+      "SELECT * FROM batches WHERE magic_token = ?"
+    ).bind(token).first();
+
+    if (!batch) {
+      return new Response(JSON.stringify({ error: "Invalid or expired magic link" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    const { results: transactions } = await env.DB.prepare(
+      "SELECT * FROM transactions WHERE batch_id = ? ORDER BY date DESC"
+    ).bind(batch.id).all();
+
+    return new Response(
+      JSON.stringify({
+        batch_id: batch.id,
+        client_name: batch.client_name,
+        status: batch.status,
+        transactions
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err.message || "Failed to fetch batch from D1" }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  }
+}
