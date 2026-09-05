@@ -13,7 +13,10 @@ import {
   Sparkles, 
   Search, 
   Eye, 
-  FileSpreadsheet
+  FileSpreadsheet,
+  X,
+  RotateCcw,
+  PartyPopper
 } from 'lucide-react';
 
 import ExportModal from './components/ExportModal';
@@ -43,6 +46,9 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [activeClientTxnId, setActiveClientTxnId] = useState(null);
   const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
+
+  // Lightbox Modal State
+  const [activeLightboxUrl, setActiveLightboxUrl] = useState(null);
 
   // Async Loading States
   const [isParsing, setIsParsing] = useState(false);
@@ -84,10 +90,13 @@ export default function App() {
     }
   }, [view, activeBatchToken]);
 
-  // Unified API Batch Fetcher
+  // Unified API Batch Fetcher with Cache-Busting
   const fetchBatchFromApi = async (token, isBackground = false) => {
     try {
-      const res = await fetch(`/api/batch?token=${token}`);
+      // Add _t timestamp and cache: 'no-store' to bypass CDN/browser caching
+      const res = await fetch(`/api/batch?token=${token}&_t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.transactions) {
@@ -163,7 +172,7 @@ export default function App() {
           const data = await res.json();
           if (res.ok && data.magicToken) {
             setActiveBatchToken(data.magicToken);
-            localStorage.setItem('catnudge_last_token', data.magicToken); // Save session
+            localStorage.setItem('catnudge_last_token', data.magicToken);
           } else {
             console.warn("D1 persistence fallback:", data.error);
           }
@@ -228,8 +237,10 @@ export default function App() {
   const handleSelectCategory = async (category) => {
     if (!activeClientTxnId) return;
 
+    let currentNote = '';
     setTransactions(prev => prev.map(t => {
       if (t.id === activeClientTxnId) {
+        currentNote = t.client_note || '';
         return {
           ...t,
           selected_category: category,
@@ -240,14 +251,13 @@ export default function App() {
     }));
 
     try {
-      const currentTxn = transactions.find(t => t.id === activeClientTxnId);
       await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transaction_id: activeClientTxnId,
           selected_category: category,
-          client_note: currentTxn?.client_note || ''
+          client_note: currentNote
         })
       });
     } catch (err) {
@@ -259,27 +269,39 @@ export default function App() {
   const handleNoteChange = async (noteText) => {
     if (!activeClientTxnId) return;
 
+    let currentCategory = '';
     setTransactions(prev => prev.map(t => {
       if (t.id === activeClientTxnId) {
+        currentCategory = t.selected_category || '';
         return { ...t, client_note: noteText };
       }
       return t;
     }));
 
     try {
-      const currentTxn = transactions.find(t => t.id === activeClientTxnId);
       await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transaction_id: activeClientTxnId,
-          selected_category: currentTxn?.selected_category || '',
+          selected_category: currentCategory,
           client_note: noteText
         })
       });
     } catch (err) {
       console.warn("Failed to save note to D1:", err.message);
     }
+  };
+
+  // Clear Session & Reset to Empty Batch
+  const handleNewBatch = () => {
+    if (transactions.length > 0 && !confirm("Start a new batch? This will clear the active dashboard view.")) {
+      return;
+    }
+    localStorage.removeItem('catnudge_last_token');
+    setActiveBatchToken(null);
+    setTransactions([]);
+    setActiveClientTxnId(null);
   };
 
   // Derived Values
@@ -346,6 +368,17 @@ export default function App() {
 
             {view === 'dashboard' && (
               <>
+                {activeBatchToken && (
+                  <button
+                    onClick={handleNewBatch}
+                    className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-3 py-2 rounded-xl border border-slate-700 transition shadow-sm"
+                    title="Clear current batch session"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span className="hidden md:inline">New Batch</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => setIsShareOpen(true)}
                   disabled={!activeBatchToken}
@@ -406,15 +439,23 @@ export default function App() {
             </div>
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar & Manual Sync Trigger */}
           {transactions.length > 0 && (
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                 <div className="flex items-center gap-2">
                   <RefreshCw className="w-3.5 h-3.5 text-emerald-500 animate-spin" />
-                  <span>Client Categorization Progress (Auto-Syncing)</span>
+                  <span>Client Categorization Progress</span>
                 </div>
-                <span>{completedCount} of {transactions.length} Completed ({Math.round((completedCount / transactions.length) * 100)}%)</span>
+                <div className="flex items-center gap-3">
+                  <span>{completedCount} of {transactions.length} Completed ({Math.round((completedCount / transactions.length) * 100)}%)</span>
+                  <button
+                    onClick={() => fetchBatchFromApi(activeBatchToken)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold px-2.5 py-1 rounded-lg transition"
+                  >
+                    Sync Now
+                  </button>
+                </div>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
                 <div 
@@ -511,15 +552,14 @@ export default function App() {
                           <div className="flex items-center gap-2">
                             <span>{txn.client_note || '—'}</span>
                             {txn.receipt_url && (
-                              <a
-                                href={txn.receipt_url}
-                                target="_blank"
-                                rel="noreferrer"
+                              <button
+                                type="button"
+                                onClick={() => setActiveLightboxUrl(txn.receipt_url)}
                                 className="p-1 bg-emerald-100 text-emerald-800 rounded hover:bg-emerald-200 transition"
-                                title="View Receipt Photo"
+                                title="Preview Receipt Photo"
                               >
                                 <Camera className="w-3.5 h-3.5" />
-                              </a>
+                              </button>
                             )}
                           </div>
                         </td>
@@ -558,7 +598,7 @@ export default function App() {
           <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xl space-y-2">
             <div className="flex items-center justify-between">
               <span className="bg-emerald-500/20 text-emerald-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-emerald-500/30">
-                Action Required
+                {pendingCount === 0 ? 'All Completed 🎉' : 'Action Required'}
               </span>
               <span className="text-xs font-mono text-slate-400">
                 {pendingCount} remaining
@@ -566,77 +606,106 @@ export default function App() {
             </div>
             <h2 className="text-xl font-black">{clientName}</h2>
             <p className="text-xs text-slate-300">
-              Tap a transaction below to select a category and snap a receipt photo for your bookkeeper.
+              {pendingCount === 0 
+                ? "You've categorized all items for your bookkeeper. Thank you!" 
+                : "Tap a transaction below to select a category and snap a receipt photo."
+              }
             </p>
           </div>
 
-          {activeTxn && (
-            <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
-              <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+          {/* Client Completion Screen when all items are categorized */}
+          {transactions.length > 0 && pendingCount === 0 ? (
+            <div className="bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl p-8 text-center space-y-3 shadow-lg">
+              <div className="w-14 h-14 bg-emerald-500 text-slate-950 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                <PartyPopper className="w-7 h-7" />
+              </div>
+              <h3 className="font-black text-slate-900 text-lg">All Done!</h3>
+              <p className="text-xs text-slate-600 max-w-xs mx-auto">
+                Every transaction has been categorized and synced directly to your bookkeeper. You can safely close this page.
+              </p>
+            </div>
+          ) : (
+            /* Active Transaction Focus Card */
+            activeTxn && (
+              <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
+                <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <span className="text-xs text-slate-400 font-mono block">{activeTxn.date}</span>
+                    <h3 className="text-lg font-black text-slate-900">{activeTxn.vendor}</h3>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-2xl font-black text-slate-900 font-mono">${activeTxn.amount.toFixed(2)}</span>
+                  </div>
+                </div>
+
                 <div>
-                  <span className="text-xs text-slate-400 font-mono block">{activeTxn.date}</span>
-                  <h3 className="text-lg font-black text-slate-900">{activeTxn.vendor}</h3>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
+                    Select Category
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {CATEGORY_OPTIONS.map((cat) => {
+                      const isSelected = activeTxn.selected_category === cat;
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => handleSelectCategory(cat)}
+                          className={`p-2.5 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between ${
+                            isSelected
+                              ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
+                              : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                          }`}
+                        >
+                          <span className="truncate">{cat}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-2xl font-black text-slate-900 font-mono">${activeTxn.amount.toFixed(2)}</span>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Note for Bookkeeper (Optional)
+                  </label>
+                  <input
+                    key={activeTxn.id}
+                    type="text"
+                    placeholder="e.g. Client lunch with John"
+                    value={activeTxn.client_note || ''}
+                    onChange={(e) => handleNoteChange(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
-                  Select Category
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {CATEGORY_OPTIONS.map((cat) => {
-                    const isSelected = activeTxn.selected_category === cat;
-                    return (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => handleSelectCategory(cat)}
-                        className={`p-2.5 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between ${
-                          isSelected
-                            ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <span className="truncate">{cat}</span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Note for Bookkeeper (Optional)
-                </label>
-                <input
-                  key={activeTxn.id}
-                  type="text"
-                  placeholder="e.g. Client lunch with John"
-                  value={activeTxn.client_note || ''}
-                  onChange={(e) => handleNoteChange(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Attach Receipt
-                </label>
-                
-                {activeTxn.receipt_url || previewBlobUrl ? (
-                  <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-32 flex items-center justify-center">
-                    <img 
-                      src={previewBlobUrl || activeTxn.receipt_url} 
-                      alt="Receipt Preview" 
-                      className="object-cover w-full h-full opacity-90"
-                    />
-                    <label className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-2 rounded-lg text-xs font-bold cursor-pointer backdrop-blur transition flex items-center gap-1">
-                      <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Retake</span>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Attach Receipt
+                  </label>
+                  
+                  {activeTxn.receipt_url || previewBlobUrl ? (
+                    <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-32 flex items-center justify-center">
+                      <img 
+                        src={previewBlobUrl || activeTxn.receipt_url} 
+                        alt="Receipt Preview" 
+                        className="object-cover w-full h-full opacity-90"
+                      />
+                      <label className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-2 rounded-lg text-xs font-bold cursor-pointer backdrop-blur transition flex items-center gap-1">
+                        <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Retake</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          capture="environment" 
+                          onChange={handleImageCapture} 
+                          className="hidden" 
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-emerald-500 p-4 rounded-xl cursor-pointer transition text-slate-600 bg-slate-50 hover:bg-emerald-50/50">
+                      <Camera className="w-4 h-4 text-emerald-600" />
+                      <span className="text-xs font-bold">Take Receipt Photo</span>
                       <input 
                         type="file" 
                         accept="image/*" 
@@ -645,22 +714,10 @@ export default function App() {
                         className="hidden" 
                       />
                     </label>
-                  </div>
-                ) : (
-                  <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-emerald-500 p-4 rounded-xl cursor-pointer transition text-slate-600 bg-slate-50 hover:bg-emerald-50/50">
-                    <Camera className="w-4 h-4 text-emerald-600" />
-                    <span className="text-xs font-bold">Take Receipt Photo</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      onChange={handleImageCapture} 
-                      className="hidden" 
-                    />
-                  </label>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )
           )}
 
           <div className="space-y-2">
@@ -701,6 +758,30 @@ export default function App() {
             </div>
           </div>
         </main>
+      )}
+
+      {/* RECEIPT LIGHTBOX MODAL */}
+      {activeLightboxUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-lg w-full relative">
+            <div className="bg-slate-900 text-white p-3 flex items-center justify-between">
+              <span className="text-xs font-bold">Receipt Preview</span>
+              <button
+                onClick={() => setActiveLightboxUrl(null)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 bg-slate-950 flex items-center justify-center min-h-[300px]">
+              <img
+                src={activeLightboxUrl}
+                alt="Receipt Full View"
+                className="max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MODALS */}
