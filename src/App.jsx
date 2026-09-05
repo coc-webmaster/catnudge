@@ -16,7 +16,8 @@ import {
   FileSpreadsheet,
   X,
   RotateCcw,
-  PartyPopper
+  PartyPopper,
+  ArrowRight
 } from 'lucide-react';
 
 import ExportModal from './components/ExportModal';
@@ -290,6 +291,20 @@ export default function App() {
       });
     } catch (err) {
       console.warn("Failed to save note to D1:", err.message);
+    }
+  };
+
+  // Advance to the next pending transaction in sequence
+  const handleNextTransaction = () => {
+    const currentIndex = transactions.findIndex(t => t.id === activeClientTxnId);
+    
+    // Look for the next pending item after the current index, or loop back to first pending
+    const nextPending = transactions.find((t, idx) => idx > currentIndex && t.status === 'pending')
+                     || transactions.find(t => t.status === 'pending');
+
+    if (nextPending) {
+      setActiveClientTxnId(nextPending.id);
+      setPreviewBlobUrl(nextPending.receipt_url);
     }
   };
 
@@ -595,6 +610,8 @@ export default function App() {
       {/* VIEW 2: CLIENT MOBILE PORTAL */}
       {view === 'client' && (
         <main className="max-w-md mx-auto px-4 py-6 space-y-5">
+          
+          {/* Mobile Header Banner */}
           <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xl space-y-2">
             <div className="flex items-center justify-between">
               <span className="bg-emerald-500/20 text-emerald-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-emerald-500/30">
@@ -608,12 +625,12 @@ export default function App() {
             <p className="text-xs text-slate-300">
               {pendingCount === 0 
                 ? "You've categorized all items for your bookkeeper. Thank you!" 
-                : "Tap a transaction below to select a category and snap a receipt photo."
+                : "Select a category and snap a receipt photo for each item below."
               }
             </p>
           </div>
 
-          {/* Client Completion Screen when all items are categorized */}
+          {/* All Done Banner */}
           {transactions.length > 0 && pendingCount === 0 ? (
             <div className="bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl p-8 text-center space-y-3 shadow-lg">
               <div className="w-14 h-14 bg-emerald-500 text-slate-950 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -625,74 +642,127 @@ export default function App() {
               </p>
             </div>
           ) : (
-            /* Active Transaction Focus Card */
-            activeTxn && (
-              <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
-                <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-                  <div>
-                    <span className="text-xs text-slate-400 font-mono block">{activeTxn.date}</span>
-                    <h3 className="text-lg font-black text-slate-900">{activeTxn.vendor}</h3>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-2xl font-black text-slate-900 font-mono">${activeTxn.amount.toFixed(2)}</span>
-                  </div>
+            <>
+              {/* ITEM QUEUE SELECTOR (Positioned ABOVE the focus card) */}
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block px-1">
+                  Items Queue ({completedCount}/{transactions.length} Done)
+                </span>
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {transactions.map((txn, index) => {
+                    const isActive = txn.id === activeClientTxnId;
+                    return (
+                      <button
+                        key={txn.id}
+                        onClick={() => {
+                          setActiveClientTxnId(txn.id);
+                          setPreviewBlobUrl(txn.receipt_url);
+                        }}
+                        className={`shrink-0 px-3 py-2 rounded-xl border text-xs font-bold transition flex items-center gap-2 ${
+                          isActive
+                            ? 'border-emerald-500 bg-emerald-500 text-slate-950 shadow-md ring-2 ring-emerald-500/20'
+                            : txn.status === 'completed'
+                            ? 'border-slate-200 bg-white text-slate-400'
+                            : 'border-slate-300 bg-white text-slate-800 hover:border-slate-400'
+                        }`}
+                      >
+                        <span>#{index + 1}</span>
+                        <span className="max-w-[100px] truncate">{txn.vendor}</span>
+                        {txn.status === 'completed' && (
+                          <CheckCircle2 className={`w-3.5 h-3.5 ${isActive ? 'text-slate-950' : 'text-emerald-500'}`} />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
-                    Select Category
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {CATEGORY_OPTIONS.map((cat) => {
-                      const isSelected = activeTxn.selected_category === cat;
-                      return (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => handleSelectCategory(cat)}
-                          className={`p-2.5 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between ${
-                            isSelected
-                              ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                              : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                          }`}
-                        >
-                          <span className="truncate">{cat}</span>
-                          {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Note for Bookkeeper (Optional)
-                  </label>
-                  <input
-                    key={activeTxn.id}
-                    type="text"
-                    placeholder="e.g. Client lunch with John"
-                    value={activeTxn.client_note || ''}
-                    onChange={(e) => handleNoteChange(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Attach Receipt
-                  </label>
+              {/* ACTIVE TRANSACTION FOCUS CARD */}
+              {activeTxn && (
+                <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
                   
-                  {activeTxn.receipt_url || previewBlobUrl ? (
-                    <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-32 flex items-center justify-center">
-                      <img 
-                        src={previewBlobUrl || activeTxn.receipt_url} 
-                        alt="Receipt Preview" 
-                        className="object-cover w-full h-full opacity-90"
-                      />
-                      <label className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-2 rounded-lg text-xs font-bold cursor-pointer backdrop-blur transition flex items-center gap-1">
-                        <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Retake</span>
+                  {/* Header / Amount */}
+                  <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+                    <div>
+                      <span className="text-xs text-slate-400 font-mono block">{activeTxn.date}</span>
+                      <h3 className="text-lg font-black text-slate-900">{activeTxn.vendor}</h3>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-2xl font-black text-slate-900 font-mono">${activeTxn.amount.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {/* Category Options */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
+                      Select Category
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {CATEGORY_OPTIONS.map((cat) => {
+                        const isSelected = activeTxn.selected_category === cat;
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => handleSelectCategory(cat)}
+                            className={`p-2.5 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between ${
+                              isSelected
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
+                                : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                            }`}
+                          >
+                            <span className="truncate">{cat}</span>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Note Field */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Note for Bookkeeper (Optional)
+                    </label>
+                    <input
+                      key={activeTxn.id}
+                      type="text"
+                      placeholder="e.g. Client lunch with John"
+                      value={activeTxn.client_note || ''}
+                      onChange={(e) => handleNoteChange(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                    />
+                  </div>
+
+                  {/* Receipt Upload */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Attach Receipt
+                    </label>
+                    
+                    {activeTxn.receipt_url || previewBlobUrl ? (
+                      <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-32 flex items-center justify-center">
+                        <img 
+                          src={previewBlobUrl || activeTxn.receipt_url} 
+                          alt="Receipt Preview" 
+                          className="object-cover w-full h-full opacity-90"
+                        />
+                        <label className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-2 rounded-lg text-xs font-bold cursor-pointer backdrop-blur transition flex items-center gap-1">
+                          <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Retake</span>
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            capture="environment" 
+                            onChange={handleImageCapture} 
+                            className="hidden" 
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-emerald-500 p-4 rounded-xl cursor-pointer transition text-slate-600 bg-slate-50 hover:bg-emerald-50/50">
+                        <Camera className="w-4 h-4 text-emerald-600" />
+                        <span className="text-xs font-bold">Take Receipt Photo</span>
                         <input 
                           type="file" 
                           accept="image/*" 
@@ -701,62 +771,28 @@ export default function App() {
                           className="hidden" 
                         />
                       </label>
+                    )}
+                  </div>
+
+                  {/* NEXT TRANSACTION ACTION BUTTON */}
+                  {pendingCount > 0 && (
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={handleNextTransaction}
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3.5 px-4 rounded-xl shadow-md transition flex items-center justify-center gap-2"
+                      >
+                        <span>Next Transaction</span>
+                        <ArrowRight className="w-4 h-4 text-emerald-400" />
+                      </button>
                     </div>
-                  ) : (
-                    <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-emerald-500 p-4 rounded-xl cursor-pointer transition text-slate-600 bg-slate-50 hover:bg-emerald-50/50">
-                      <Camera className="w-4 h-4 text-emerald-600" />
-                      <span className="text-xs font-bold">Take Receipt Photo</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        capture="environment" 
-                        onChange={handleImageCapture} 
-                        className="hidden" 
-                      />
-                    </label>
                   )}
+
                 </div>
-              </div>
-            )
+              )}
+            </>
           )}
 
-          <div className="space-y-2">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block px-1">
-              All Items ({transactions.length})
-            </span>
-            <div className="space-y-2">
-              {transactions.map((txn) => {
-                const isActive = txn.id === activeClientTxnId;
-                return (
-                  <button
-                    key={txn.id}
-                    onClick={() => {
-                      setActiveClientTxnId(txn.id);
-                      setPreviewBlobUrl(txn.receipt_url);
-                    }}
-                    className={`w-full text-left p-3.5 rounded-xl border transition flex items-center justify-between ${
-                      isActive
-                        ? 'border-emerald-500 bg-white shadow-md ring-2 ring-emerald-500/10'
-                        : 'border-slate-200 bg-white hover:bg-slate-50'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-slate-900">{txn.vendor}</span>
-                        {txn.status === 'completed' && (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                        )}
-                      </div>
-                      <span className="text-[11px] text-slate-400 block">{txn.date}</span>
-                    </div>
-                    <span className="font-mono font-bold text-xs text-slate-900">
-                      ${txn.amount.toFixed(2)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </main>
       )}
 
