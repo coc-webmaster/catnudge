@@ -3,17 +3,16 @@ export async function onRequestGet(context) {
   const { env } = context;
 
   try {
-    // Query D1 for batch metadata aggregated by batch_token
+    // Query D1 using standard transaction columns
     const { results } = await env.DB.prepare(`
       SELECT 
         batch_token,
         client_name,
-        MAX(created_at) as created_at,
         COUNT(id) as total_count,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
       FROM transactions
+      WHERE batch_token IS NOT NULL AND batch_token != ''
       GROUP BY batch_token, client_name
-      ORDER BY created_at DESC
     `).all();
 
     return new Response(JSON.stringify({ batches: results || [] }), {

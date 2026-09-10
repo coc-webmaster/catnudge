@@ -104,14 +104,15 @@ export default function App() {
   const fetchClientBatches = async () => {
     try {
       const res = await fetch(`/api/batches?_t=${Date.now()}`, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.batches) {
-          setClientBatches(data.batches);
-        }
+      const data = await res.json();
+      
+      if (res.ok && data.batches) {
+        setClientBatches(data.batches);
+      } else {
+        console.warn("API /api/batches returned error:", data.error || res.statusText);
       }
     } catch (err) {
-      console.warn("D1 client batches fallback:", err.message);
+      console.warn("Failed to fetch client batches:", err.message);
     }
   };
 
