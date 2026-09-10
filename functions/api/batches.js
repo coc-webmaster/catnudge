@@ -3,21 +3,19 @@ export async function onRequestGet(context) {
   const { env } = context;
 
   try {
-    // 1. Inspect table structure dynamically to identify actual column names
     const info = await env.DB.prepare("PRAGMA table_info(transactions)").all();
     const columns = (info.results || []).map(c => c.name);
 
-    // Detect token column variant in D1
     let tokenCol = 'batch_token';
     if (columns.includes('token')) tokenCol = 'token';
     else if (columns.includes('batch_id')) tokenCol = 'batch_id';
     else if (columns.includes('magic_token')) tokenCol = 'magic_token';
-    else if (columns.includes('batch_token')) tokenCol = 'batch_token';
 
     const hasClientName = columns.includes('client_name');
-    const clientSelect = hasClientName ? 'client_name,' : "'Client Batch' as client_name,";
+    const clientSelect = hasClientName 
+      ? `MAX(CASE WHEN client_name IS NOT NULL AND client_name != '' THEN client_name ELSE 'Unnamed Client' END) as client_name,` 
+      : `'Unnamed Client' as client_name,`;
 
-    // 2. Query batches using detected schema
     const query = `
       SELECT 
         ${tokenCol} as batch_token,

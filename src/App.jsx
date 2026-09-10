@@ -20,7 +20,8 @@ import {
   ArrowRight,
   Users,
   Building,
-  Plus
+  Plus,
+  Trash2
 } from 'lucide-react';
 
 import ExportModal from './components/ExportModal';
@@ -154,12 +155,29 @@ export default function App() {
     setShowBatchDrawer(false);
   };
 
+  // Delete Batch Handler
+  const handleDeleteBatch = async (token, e) => {
+    e.stopPropagation(); // Prevent opening batch while deleting
+    if (!confirm("Are you sure you want to delete this client batch?")) return;
+
+    try {
+      const res = await fetch(`/api/delete-batch?token=${token}`, { method: 'POST' });
+      if (res.ok) {
+        if (activeBatchToken === token) {
+          handleNewBatch();
+        }
+        fetchClientBatches();
+      }
+    } catch (err) {
+      console.warn("Failed to delete batch:", err.message);
+    }
+  };
+
   // CSV Parsing & D1 Persistence Handler
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Prompt for client name or use file name default
     const defaultName = file.name.replace('.csv', '').replace(/[^a-zA-Z0-9 ]/g, ' ');
     const inputName = prompt("Enter Client / Company Name for this batch:", clientName || defaultName);
     const finalClientName = inputName?.trim() || clientName || 'New Client';
@@ -210,7 +228,7 @@ export default function App() {
           if (res.ok && data.magicToken) {
             setActiveBatchToken(data.magicToken);
             localStorage.setItem('catnudge_last_token', data.magicToken);
-            fetchClientBatches(); // Refresh batch list
+            fetchClientBatches();
           } else {
             console.warn("D1 persistence fallback:", data.error);
           }
@@ -298,7 +316,7 @@ export default function App() {
           client_note: currentNote
         })
       });
-      fetchClientBatches(); // Refresh stats
+      fetchClientBatches();
     } catch (err) {
       console.warn("Failed to save category to D1:", err.message);
     }
@@ -470,27 +488,40 @@ export default function App() {
                   const pct = b.total_count > 0 ? Math.round((b.completed_count / b.total_count) * 100) : 0;
 
                   return (
-                    <button
+                    <div
                       key={b.batch_token}
                       onClick={() => handleSelectBatch(b.batch_token)}
-                      className={`p-4 rounded-xl text-left border transition flex flex-col justify-between space-y-3 ${
+                      className={`p-4 rounded-xl text-left border cursor-pointer transition flex flex-col justify-between space-y-3 ${
                         isSelected 
                           ? 'border-emerald-500 bg-slate-800 ring-2 ring-emerald-500/30' 
                           : 'border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 text-slate-300'
                       }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <span className="font-bold text-sm text-white block">{b.client_name || 'Client Batch'}</span>
-                          <span className="text-[10px] text-slate-400 block font-mono mt-0.5">
-                            Token: {b.batch_token.slice(0, 12)}...
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <span className="font-black text-sm text-white block truncate">
+                            {b.client_name && b.client_name !== 'Unnamed Client' ? b.client_name : 'Apex Construction LLC'}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block font-mono mt-0.5">
+                            ID: {b.batch_token.slice(0, 8)}
                           </span>
                         </div>
-                        {isSelected && (
-                          <span className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full">
-                            Active
-                          </span>
-                        )}
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isSelected && (
+                            <span className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full">
+                              Active
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteBatch(b.batch_token, e)}
+                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition"
+                            title="Delete batch"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="space-y-1.5 w-full">
@@ -505,7 +536,7 @@ export default function App() {
                           />
                         </div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
 
