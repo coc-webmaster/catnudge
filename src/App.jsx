@@ -17,13 +17,15 @@ import {
   X,
   RotateCcw,
   PartyPopper,
-  ArrowRight
+  ArrowRight,
+  Users,
+  Building,
+  Plus
 } from 'lucide-react';
 
 import ExportModal from './components/ExportModal';
 import ShareModal from './components/ShareModal';
 
-// Category presets for quick client categorization
 const CATEGORY_OPTIONS = [
   'Office Supplies',
   'Meals & Entertainment',
@@ -48,6 +50,10 @@ export default function App() {
   const [activeClientTxnId, setActiveClientTxnId] = useState(null);
   const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
 
+  // Multi-Client Batch Manager State
+  const [clientBatches, setClientBatches] = useState([]);
+  const [showBatchDrawer, setShowBatchDrawer] = useState(false);
+
   // Lightbox Modal State
   const [activeLightboxUrl, setActiveLightboxUrl] = useState(null);
 
@@ -70,31 +76,48 @@ export default function App() {
     const savedToken = localStorage.getItem('catnudge_last_token');
 
     if (urlToken) {
-      // Client opening magic link
       setActiveBatchToken(urlToken);
       setView('client');
       fetchBatchFromApi(urlToken);
     } else if (savedToken) {
-      // Bookkeeper returning to dashboard
       setActiveBatchToken(savedToken);
       fetchBatchFromApi(savedToken);
     }
+
+    fetchClientBatches();
   }, []);
 
-  // 2. Background Auto-Sync (Polls Cloudflare D1 every 10s when in Bookkeeper view)
+  // 2. Background Auto-Sync for active batch and all client summaries every 10s
   useEffect(() => {
-    if (view === 'dashboard' && activeBatchToken) {
+    if (view === 'dashboard') {
       const interval = setInterval(() => {
-        fetchBatchFromApi(activeBatchToken, true); // silent background polling
+        fetchClientBatches();
+        if (activeBatchToken) {
+          fetchBatchFromApi(activeBatchToken, true);
+        }
       }, 10000);
       return () => clearInterval(interval);
     }
   }, [view, activeBatchToken]);
 
-  // Unified API Batch Fetcher with Cache-Busting
+  // Fetch all active client batches summary from D1
+  const fetchClientBatches = async () => {
+    try {
+      const res = await fetch(`/api/batches?_t=${Date.now()}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.batches) {
+          setClientBatches(data.batches);
+        }
+      }
+    } catch (err) {
+      console.warn("D1 client batches fallback:", err.message);
+    }
+  };
+
+  // Fetch batch transactions for a specific token
   const fetchBatchFromApi = async (token, isBackground = false) => {
     try {
-      // Add _t timestamp and cache: 'no-store' to bypass CDN/browser caching
       const res = await fetch(`/api/batch?token=${token}&_t=${Date.now()}`, {
         cache: 'no-store'
       });
@@ -122,10 +145,24 @@ export default function App() {
     }
   };
 
+  // Switch Active Batch Handler
+  const handleSelectBatch = (token) => {
+    setActiveBatchToken(token);
+    localStorage.setItem('catnudge_last_token', token);
+    fetchBatchFromApi(token);
+    setShowBatchDrawer(false);
+  };
+
   // CSV Parsing & D1 Persistence Handler
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    // Prompt for client name or use file name default
+    const defaultName = file.name.replace('.csv', '').replace(/[^a-zA-Z0-9 ]/g, ' ');
+    const inputName = prompt("Enter Client / Company Name for this batch:", clientName || defaultName);
+    const finalClientName = inputName?.trim() || clientName || 'New Client';
+    setClientName(finalClientName);
 
     setIsParsing(true);
     Papa.parse(file, {
@@ -155,17 +192,15 @@ export default function App() {
           return;
         }
 
-        // Update UI state immediately
         setTransactions(parsedTxns);
         setActiveClientTxnId(parsedTxns[0].id);
 
-        // Persist to Cloudflare D1 via /api/batch
         try {
           const res = await fetch('/api/batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              client_name: clientName,
+              client_name: finalClientName,
               transactions: parsedTxns
             })
           });
@@ -174,6 +209,7 @@ export default function App() {
           if (res.ok && data.magicToken) {
             setActiveBatchToken(data.magicToken);
             localStorage.setItem('catnudge_last_token', data.magicToken);
+            fetchClientBatches(); // Refresh batch list
           } else {
             console.warn("D1 persistence fallback:", data.error);
           }
@@ -185,7 +221,7 @@ export default function App() {
       },
       error: (err) => {
         console.error("CSV Parse Error:", err);
-        alert("Failed to parse CSV file. Please check file format.");
+        alert("Failed to parse CSV file.");
         setIsParsing(false);
       }
     });
@@ -261,6 +297,7 @@ export default function App() {
           client_note: currentNote
         })
       });
+      fetchClientBatches(); // Refresh stats
     } catch (err) {
       console.warn("Failed to save category to D1:", err.message);
     }
@@ -294,11 +331,8 @@ export default function App() {
     }
   };
 
-  // Advance to the next pending transaction in sequence
   const handleNextTransaction = () => {
     const currentIndex = transactions.findIndex(t => t.id === activeClientTxnId);
-    
-    // Look for the next pending item after the current index, or loop back to first pending
     const nextPending = transactions.find((t, idx) => idx > currentIndex && t.status === 'pending')
                      || transactions.find(t => t.status === 'pending');
 
@@ -308,21 +342,16 @@ export default function App() {
     }
   };
 
-  // Clear Session & Reset to Empty Batch
   const handleNewBatch = () => {
-    if (transactions.length > 0 && !confirm("Start a new batch? This will clear the active dashboard view.")) {
-      return;
-    }
     localStorage.removeItem('catnudge_last_token');
     setActiveBatchToken(null);
     setTransactions([]);
     setActiveClientTxnId(null);
   };
 
-  // Derived Values
-  const activeTxn = transactions.find(t => t.id === activeClientTxnId) || transactions[0];
   const completedCount = transactions.filter(t => t.status === 'completed').length;
   const pendingCount = transactions.filter(t => t.status === 'pending').length;
+  const activeTxn = transactions.find(t => t.id === activeClientTxnId) || transactions[0];
 
   const filteredTransactions = transactions.filter(t => {
     const matchesSearch = t.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -383,16 +412,13 @@ export default function App() {
 
             {view === 'dashboard' && (
               <>
-                {activeBatchToken && (
-                  <button
-                    onClick={handleNewBatch}
-                    className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-3 py-2 rounded-xl border border-slate-700 transition shadow-sm"
-                    title="Clear current batch session"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span className="hidden md:inline">New Batch</span>
-                  </button>
-                )}
+                <button
+                  onClick={() => setShowBatchDrawer(!showBatchDrawer)}
+                  className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold text-xs px-3.5 py-2 rounded-xl border border-slate-700 transition shadow-sm"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Client Accounts ({clientBatches.length})</span>
+                </button>
 
                 <button
                   onClick={() => setIsShareOpen(true)}
@@ -421,6 +447,104 @@ export default function App() {
       {view === 'dashboard' && (
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
           
+          {/* MULTI-CLIENT BATCH MANAGER DRAWER */}
+          {showBatchDrawer && (
+            <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-2xl border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building className="w-5 h-5 text-emerald-400" />
+                  <h3 className="font-bold text-base">Client Accounts & Active Batches</h3>
+                </div>
+                <button
+                  onClick={() => setShowBatchDrawer(false)}
+                  className="text-slate-400 hover:text-white p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {clientBatches.map((b) => {
+                  const isSelected = b.batch_token === activeBatchToken;
+                  const pct = b.total_count > 0 ? Math.round((b.completed_count / b.total_count) * 100) : 0;
+
+                  return (
+                    <button
+                      key={b.batch_token}
+                      onClick={() => handleSelectBatch(b.batch_token)}
+                      className={`p-4 rounded-xl text-left border transition flex flex-col justify-between space-y-3 ${
+                        isSelected 
+                          ? 'border-emerald-500 bg-slate-800 ring-2 ring-emerald-500/30' 
+                          : 'border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <span className="font-bold text-sm text-white block">{b.client_name || 'Client Batch'}</span>
+                          <span className="text-[10px] text-slate-400 block font-mono mt-0.5">
+                            Token: {b.batch_token.slice(0, 12)}...
+                          </span>
+                        </div>
+                        {isSelected && (
+                          <span className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full">
+                            Active
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5 w-full">
+                        <div className="flex justify-between text-[11px] font-semibold text-slate-400">
+                          <span>{b.completed_count}/{b.total_count} Categorized</span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className="bg-emerald-500 h-1.5 rounded-full" 
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {clientBatches.length === 0 && (
+                  <div className="col-span-full py-6 text-center text-slate-500 text-xs">
+                    No active client batches found in Cloudflare D1. Upload a CSV to create your first client batch.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ACTIVE CLIENT HEADER BANNER */}
+          {activeBatchToken && (
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-50 text-emerald-700 rounded-xl flex items-center justify-center font-bold">
+                  <Building className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black text-slate-900">{clientName}</h2>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Active Session
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">Magic Token: {activeBatchToken}</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowBatchDrawer(!showBatchDrawer)}
+                className="text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 px-3 py-2 rounded-xl transition flex items-center gap-1.5"
+              >
+                <Users className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Switch Client</span>
+              </button>
+            </div>
+          )}
+
           {/* Top Banner Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
@@ -454,7 +578,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Progress Bar & Manual Sync Trigger */}
+          {/* Progress Bar & Sync Trigger */}
           {transactions.length > 0 && (
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
@@ -465,7 +589,10 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <span>{completedCount} of {transactions.length} Completed ({Math.round((completedCount / transactions.length) * 100)}%)</span>
                   <button
-                    onClick={() => fetchBatchFromApi(activeBatchToken)}
+                    onClick={() => {
+                      fetchBatchFromApi(activeBatchToken);
+                      fetchClientBatches();
+                    }}
                     className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold px-2.5 py-1 rounded-lg transition"
                   >
                     Sync Now
@@ -483,10 +610,10 @@ export default function App() {
 
           {/* Main Controls & Toolbar */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="w-full md:w-auto">
+            <div className="w-full md:w-auto flex items-center gap-2">
               <label className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition shadow">
                 <Upload className="w-4 h-4 text-emerald-400" />
-                <span>Upload New Bank CSV</span>
+                <span>Upload New Client Bank CSV</span>
                 <input
                   type="file"
                   accept=".csv"
@@ -494,6 +621,16 @@ export default function App() {
                   className="hidden"
                 />
               </label>
+
+              {activeBatchToken && (
+                <button
+                  onClick={handleNewBatch}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2.5 rounded-xl transition"
+                  title="Clear active view"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-3 w-full md:w-auto">
@@ -610,8 +747,6 @@ export default function App() {
       {/* VIEW 2: CLIENT MOBILE PORTAL */}
       {view === 'client' && (
         <main className="max-w-md mx-auto px-4 py-6 space-y-5">
-          
-          {/* Mobile Header Banner */}
           <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xl space-y-2">
             <div className="flex items-center justify-between">
               <span className="bg-emerald-500/20 text-emerald-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-emerald-500/30">
@@ -630,7 +765,6 @@ export default function App() {
             </p>
           </div>
 
-          {/* All Done Banner */}
           {transactions.length > 0 && pendingCount === 0 ? (
             <div className="bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl p-8 text-center space-y-3 shadow-lg">
               <div className="w-14 h-14 bg-emerald-500 text-slate-950 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -643,7 +777,7 @@ export default function App() {
             </div>
           ) : (
             <>
-              {/* ITEM QUEUE SELECTOR (Positioned ABOVE the focus card) */}
+              {/* ITEM QUEUE SELECTOR */}
               <div className="space-y-2">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block px-1">
                   Items Queue ({completedCount}/{transactions.length} Done)
@@ -680,8 +814,6 @@ export default function App() {
               {/* ACTIVE TRANSACTION FOCUS CARD */}
               {activeTxn && (
                 <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
-                  
-                  {/* Header / Amount */}
                   <div className="flex items-start justify-between border-b border-slate-100 pb-4">
                     <div>
                       <span className="text-xs text-slate-400 font-mono block">{activeTxn.date}</span>
@@ -692,7 +824,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Category Options */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
                       Select Category
@@ -719,7 +850,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Note Field */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                       Note for Bookkeeper (Optional)
@@ -734,7 +864,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Receipt Upload */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                       Attach Receipt
@@ -774,7 +903,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* NEXT TRANSACTION ACTION BUTTON */}
                   {pendingCount > 0 && (
                     <div className="pt-2">
                       <button
