@@ -3,17 +3,33 @@ export async function onRequestGet(context) {
   const { env } = context;
 
   try {
-    // Query D1 using standard transaction columns
-    const { results } = await env.DB.prepare(`
+    // 1. Inspect table structure dynamically to identify actual column names
+    const info = await env.DB.prepare("PRAGMA table_info(transactions)").all();
+    const columns = (info.results || []).map(c => c.name);
+
+    // Detect token column variant in D1
+    let tokenCol = 'batch_token';
+    if (columns.includes('token')) tokenCol = 'token';
+    else if (columns.includes('batch_id')) tokenCol = 'batch_id';
+    else if (columns.includes('magic_token')) tokenCol = 'magic_token';
+    else if (columns.includes('batch_token')) tokenCol = 'batch_token';
+
+    const hasClientName = columns.includes('client_name');
+    const clientSelect = hasClientName ? 'client_name,' : "'Client Batch' as client_name,";
+
+    // 2. Query batches using detected schema
+    const query = `
       SELECT 
-        batch_token,
-        client_name,
+        ${tokenCol} as batch_token,
+        ${clientSelect}
         COUNT(id) as total_count,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
       FROM transactions
-      WHERE batch_token IS NOT NULL AND batch_token != ''
-      GROUP BY batch_token, client_name
-    `).all();
+      WHERE ${tokenCol} IS NOT NULL AND ${tokenCol} != ''
+      GROUP BY ${tokenCol}
+    `;
+
+    const { results } = await env.DB.prepare(query).all();
 
     return new Response(JSON.stringify({ batches: results || [] }), {
       headers: { 
