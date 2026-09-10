@@ -1,124 +1,99 @@
-/**
- * POST /api/batch
- * Saves parsed CSV transactions to Cloudflare D1
- */
-export async function onRequestPost(context) {
+// functions/api/batch.js
+export async function onRequest(context) {
   const { request, env } = context;
 
-  try {
-    const body = await request.json();
-    const { client_name, transactions } = body;
+  // GET /api/batch?token=...
+  if (request.method === 'GET') {
+    const url = new URL(request.url);
+    const token = url.searchParams.get('token');
+    if (!token) return new Response(JSON.stringify({ error: 'Missing token' }), { status: 400 });
 
-    if (!transactions || !Array.isArray(transactions) || transactions.length === 0) {
-      return new Response(JSON.stringify({ error: "No transactions provided." }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
+    try {
+      const info = await env.DB.prepare("PRAGMA table_info(transactions)").all();
+      const columns = (info.results || []).map(c => c.name);
+
+      let tokenCol = 'batch_token';
+      if (columns.includes('token')) tokenCol = 'token';
+      else if (columns.includes('batch_id')) tokenCol = 'batch_id';
+      else if (columns.includes('magic_token')) tokenCol = 'magic_token';
+
+      const hasClientName = columns.includes('client_name');
+      const clientSelect = hasClientName ? 'client_name,' : '';
+
+      const { results } = await env.DB.prepare(`
+        SELECT id, date, vendor, amount, suggested_category, selected_category, client_note, receipt_url, status, ${clientSelect} ${tokenCol} as batch_token
+        FROM transactions
+        WHERE ${tokenCol} = ?
+      `).bind(token).all();
+
+      const clientName = (results && results[0] && results[0].client_name) ? results[0].client_name : 'Client Batch';
+
+      return new Response(JSON.stringify({ transactions: results || [], client_name: clientName }), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
       });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }
-
-    const batchId = `batch_${Date.now()}`;
-    const magicToken = crypto.randomUUID().slice(0, 8);
-    const clientName = client_name || "Apex Construction LLC";
-
-    // 1. Insert Batch metadata
-    await env.DB.prepare(
-      "INSERT INTO batches (id, client_name, magic_token, status) VALUES (?, ?, ?, 'active')"
-    ).bind(batchId, clientName, magicToken).run();
-
-    // 2. Prepare atomic batch SQL statements for transaction rows
-    const stmts = transactions.map((t) =>
-      env.DB.prepare(
-        `INSERT INTO transactions 
-        (id, batch_id, date, vendor, amount, suggested_category, status) 
-        VALUES (?, ?, ?, ?, ?, ?, 'pending')`
-      ).bind(
-        t.id,
-        batchId,
-        t.date,
-        t.vendor,
-        t.amount,
-        t.suggested_category || "Uncategorized"
-      )
-    );
-
-    // Execute bulk insert in D1
-    await env.DB.batch(stmts);
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        batchId,
-        magicToken,
-        shareUrl: `/nudge/${magicToken}`,
-        count: transactions.length
-      }),
-      {
-        status: 201,
-        headers: { "Content-Type": "application/json" }
-      }
-    );
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err.message || "Failed to persist batch to D1" }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      }
-    );
-  }
-}
-
-/**
- * GET /api/batch?token=xyz
- * Fetches batch metadata and transaction list for client view
- */
-export async function onRequestGet(context) {
-  const { request, env } = context;
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token");
-
-  if (!token) {
-    return new Response(JSON.stringify({ error: "Token required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" }
-    });
   }
 
-  try {
-    const batch = await env.DB.prepare(
-      "SELECT * FROM batches WHERE magic_token = ?"
-    ).bind(token).first();
+  // POST /api/batch (Create new batch from CSV)
+  if (request.method === 'POST') {
+    try {
+      const { client_name, transactions } = await request.json();
+      const magicToken = 'm_' + Math.random().toString(36).substring(2, 10);
 
-    if (!batch) {
-      return new Response(JSON.stringify({ error: "Invalid or expired magic link" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" }
+      const info = await env.DB.prepare("PRAGMA table_info(transactions)").all();
+      const columns = (info.results || []).map(c => c.name);
+
+      let tokenCol = 'batch_token';
+      if (columns.includes('token')) tokenCol = 'token';
+      else if (columns.includes('batch_id')) tokenCol = 'batch_id';
+      else if (columns.includes('magic_token')) tokenCol = 'magic_token';
+
+      const hasClientName = columns.includes('client_name');
+
+      for (const t of transactions) {
+        if (hasClientName) {
+          await env.DB.prepare(`
+            INSERT INTO transactions (id, ${tokenCol}, client_name, date, vendor, amount, suggested_category, selected_category, client_note, receipt_url, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            t.id,
+            magicToken,
+            client_name || 'New Client',
+            t.date,
+            t.vendor,
+            t.amount,
+            t.suggested_category || 'Uncategorized',
+            t.selected_category || null,
+            t.client_note || '',
+            t.receipt_url || null,
+            t.status || 'pending'
+          ).run();
+        } else {
+          await env.DB.prepare(`
+            INSERT INTO transactions (id, ${tokenCol}, date, vendor, amount, suggested_category, selected_category, client_note, receipt_url, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            t.id,
+            magicToken,
+            t.date,
+            t.vendor,
+            t.amount,
+            t.suggested_category || 'Uncategorized',
+            t.selected_category || null,
+            t.client_note || '',
+            t.receipt_url || null,
+            t.status || 'pending'
+          ).run();
+        }
+      }
+
+      return new Response(JSON.stringify({ magicToken, client_name }), {
+        headers: { 'Content-Type': 'application/json' }
       });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }
-
-    const { results: transactions } = await env.DB.prepare(
-      "SELECT * FROM transactions WHERE batch_id = ? ORDER BY date DESC"
-    ).bind(batch.id).all();
-
-    return new Response(
-      JSON.stringify({
-        batch_id: batch.id,
-        client_name: batch.client_name,
-        status: batch.status,
-        transactions
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      }
-    );
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err.message || "Failed to fetch batch from D1" }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      }
-    );
   }
 }

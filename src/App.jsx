@@ -41,36 +41,28 @@ const CATEGORY_OPTIONS = [
 ];
 
 export default function App() {
-  // App Navigation & Active Context
-  const [view, setView] = useState('dashboard'); // 'dashboard' | 'client'
-  const [clientName, setClientName] = useState('Apex Construction LLC');
+  const [view, setView] = useState('dashboard');
+  // Dynamic default state instead of hardcoded 'Apex Construction LLC'
+  const [clientName, setClientName] = useState('');
   const [activeBatchToken, setActiveBatchToken] = useState(null);
 
-  // Core Data State
   const [transactions, setTransactions] = useState([]);
   const [activeClientTxnId, setActiveClientTxnId] = useState(null);
   const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
 
-  // Multi-Client Batch Manager State
   const [clientBatches, setClientBatches] = useState([]);
   const [showBatchDrawer, setShowBatchDrawer] = useState(false);
-
-  // Lightbox Modal State
   const [activeLightboxUrl, setActiveLightboxUrl] = useState(null);
 
-  // Async Loading States
   const [isParsing, setIsParsing] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // Modal Visibility States
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
 
-  // Search & Filter State in Dashboard
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // 1. Initial Load: Check URL parameters OR restore bookkeeper session from localStorage
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
@@ -88,7 +80,6 @@ export default function App() {
     fetchClientBatches();
   }, []);
 
-  // 2. Background Auto-Sync for active batch and all client summaries every 10s
   useEffect(() => {
     if (view === 'dashboard') {
       const interval = setInterval(() => {
@@ -101,7 +92,6 @@ export default function App() {
     }
   }, [view, activeBatchToken]);
 
-  // Fetch all active client batches summary from D1
   const fetchClientBatches = async () => {
     try {
       const res = await fetch(`/api/batches?_t=${Date.now()}`, { cache: 'no-store' });
@@ -117,7 +107,6 @@ export default function App() {
     }
   };
 
-  // Fetch batch transactions for a specific token
   const fetchBatchFromApi = async (token, isBackground = false) => {
     try {
       const res = await fetch(`/api/batch?token=${token}&_t=${Date.now()}`, {
@@ -147,7 +136,6 @@ export default function App() {
     }
   };
 
-  // Switch Active Batch Handler
   const handleSelectBatch = (token) => {
     setActiveBatchToken(token);
     localStorage.setItem('catnudge_last_token', token);
@@ -155,9 +143,8 @@ export default function App() {
     setShowBatchDrawer(false);
   };
 
-  // Delete Batch Handler
   const handleDeleteBatch = async (token, e) => {
-    e.stopPropagation(); // Prevent opening batch while deleting
+    e.stopPropagation();
     if (!confirm("Are you sure you want to delete this client batch?")) return;
 
     try {
@@ -173,7 +160,6 @@ export default function App() {
     }
   };
 
-  // CSV Parsing & D1 Persistence Handler
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -246,7 +232,6 @@ export default function App() {
     });
   };
 
-  // Receipt Photo Capture Handler
   const handleImageCapture = async (e) => {
     const file = e.target.files[0];
     if (!file || !activeClientTxnId) return;
@@ -289,7 +274,6 @@ export default function App() {
     }
   };
 
-  // Update Category & Persist to D1
   const handleSelectCategory = async (category) => {
     if (!activeClientTxnId) return;
 
@@ -322,7 +306,6 @@ export default function App() {
     }
   };
 
-  // Update Note Text & Persist to D1
   const handleNoteChange = async (noteText) => {
     if (!activeClientTxnId) return;
 
@@ -366,6 +349,7 @@ export default function App() {
     setActiveBatchToken(null);
     setTransactions([]);
     setActiveClientTxnId(null);
+    setClientName('');
   };
 
   const completedCount = transactions.filter(t => t.status === 'completed').length;
@@ -381,12 +365,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans antialiased">
-      
-      {/* GLOBAL TOP BAR */}
       <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          
-          {/* Brand Logo */}
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-emerald-500 text-slate-950 font-black flex items-center justify-center rounded-xl text-lg shadow-inner">
               🐾
@@ -402,7 +382,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Mode Switcher & Global Actions */}
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="bg-slate-800 p-1 rounded-xl flex items-center border border-slate-700/80">
               <button
@@ -462,11 +441,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* VIEW 1: BOOKKEEPER DASHBOARD */}
       {view === 'dashboard' && (
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-          
-          {/* MULTI-CLIENT BATCH MANAGER DRAWER */}
           {showBatchDrawer && (
             <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-2xl border border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
@@ -499,8 +475,9 @@ export default function App() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
+                          {/* Clean dynamic fallback */}
                           <span className="font-black text-sm text-white block truncate">
-                            {b.client_name && b.client_name !== 'Unnamed Client' ? b.client_name : 'Apex Construction LLC'}
+                            {b.client_name || 'Unnamed Client'}
                           </span>
                           <span className="text-[10px] text-slate-500 block font-mono mt-0.5">
                             ID: {b.batch_token.slice(0, 8)}
@@ -549,7 +526,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ACTIVE CLIENT HEADER BANNER */}
           {activeBatchToken && (
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -558,7 +534,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-black text-slate-900">{clientName}</h2>
+                    <h2 className="text-lg font-black text-slate-900">{clientName || 'Client Batch'}</h2>
                     <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
                       Active Session
                     </span>
@@ -577,7 +553,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Top Banner Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
               <div>
@@ -610,7 +585,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Progress Bar & Sync Trigger */}
           {transactions.length > 0 && (
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
@@ -640,7 +614,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Main Controls & Toolbar */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="w-full md:w-auto flex items-center gap-2">
               <label className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition shadow">
@@ -689,7 +662,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Transactions Table / Empty State */}
           {transactions.length === 0 ? (
             <div className="bg-white rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center space-y-3">
               <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
@@ -776,7 +748,6 @@ export default function App() {
         </main>
       )}
 
-      {/* VIEW 2: CLIENT MOBILE PORTAL */}
       {view === 'client' && (
         <main className="max-w-md mx-auto px-4 py-6 space-y-5">
           <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xl space-y-2">
@@ -788,7 +759,7 @@ export default function App() {
                 {pendingCount} remaining
               </span>
             </div>
-            <h2 className="text-xl font-black">{clientName}</h2>
+            <h2 className="text-xl font-black">{clientName || 'Client Batch'}</h2>
             <p className="text-xs text-slate-300">
               {pendingCount === 0 
                 ? "You've categorized all items for your bookkeeper. Thank you!" 
@@ -809,7 +780,6 @@ export default function App() {
             </div>
           ) : (
             <>
-              {/* ITEM QUEUE SELECTOR */}
               <div className="space-y-2">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block px-1">
                   Items Queue ({completedCount}/{transactions.length} Done)
@@ -843,7 +813,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ACTIVE TRANSACTION FOCUS CARD */}
               {activeTxn && (
                 <div className="bg-white rounded-2xl border-2 border-emerald-500/30 p-5 shadow-lg space-y-5">
                   <div className="flex items-start justify-between border-b border-slate-100 pb-4">
@@ -956,7 +925,6 @@ export default function App() {
         </main>
       )}
 
-      {/* RECEIPT LIGHTBOX MODAL */}
       {activeLightboxUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-lg w-full relative">
@@ -980,7 +948,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODALS */}
       <ExportModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
@@ -995,7 +962,6 @@ export default function App() {
         clientName={clientName}
         pendingCount={pendingCount}
       />
-
     </div>
   );
 }
