@@ -214,12 +214,12 @@ export default function App() {
           if (res.ok && data.magicToken) {
             setActiveBatchToken(data.magicToken);
             localStorage.setItem('catnudge_last_token', data.magicToken);
-            fetchClientBatches();
+            await fetchClientBatches();
           } else {
-            console.warn("D1 persistence fallback:", data.error);
+            alert("Error persisting batch to D1: " + (data.error || "Unknown server error"));
           }
         } catch (err) {
-          console.warn("Network error saving batch to D1:", err.message);
+          alert("Network error saving batch: " + err.message);
         } finally {
           setIsParsing(false);
         }

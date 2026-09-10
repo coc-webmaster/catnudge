@@ -7,7 +7,8 @@ export async function onRequestGet(context) {
     const columns = (info.results || []).map(c => c.name);
 
     let tokenCol = 'batch_token';
-    if (columns.includes('token')) tokenCol = 'token';
+    if (columns.includes('batch_token')) tokenCol = 'batch_token';
+    else if (columns.includes('token')) tokenCol = 'token';
     else if (columns.includes('batch_id')) tokenCol = 'batch_id';
     else if (columns.includes('magic_token')) tokenCol = 'magic_token';
 
